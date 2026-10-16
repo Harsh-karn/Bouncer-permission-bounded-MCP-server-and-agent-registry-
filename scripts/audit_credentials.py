@@ -11,8 +11,10 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List
 
-# Ensure src is in python path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Ensure project root and src are in python path
+_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "src"))
 
 from bouncer.adapters.notion import NotionAdapter
 from bouncer.registry import AgentRegistry

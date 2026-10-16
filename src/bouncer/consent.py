@@ -16,6 +16,7 @@ import jwt
 
 
 DEFAULT_DEV_SECRET = "bouncer-dev-consent-signing-key-32bytes!"
+DEFAULT_SECRET = DEFAULT_DEV_SECRET  # Backward-compatible alias
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
 
 

@@ -31,7 +31,7 @@ jobs:
 
       - name: Step 1 - Validate Agent Registry
         run: |
-          python -m src.bouncer.cli validate --path registry/agents.yaml
+          bouncer validate --path registry/agents.yaml
 
       - name: Step 2 - Model-Free Tool-Surface Invariants
         run: |
