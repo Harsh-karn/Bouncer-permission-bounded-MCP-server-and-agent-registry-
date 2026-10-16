@@ -13,6 +13,7 @@ from registry.schema import FORBIDDEN_TOOLS
 from src.bouncer.adapters.notion import NotionAdapter
 from src.bouncer.authz import AuthorizationError, Authorizer
 from src.bouncer.registry import AgentRegistry
+from src.bouncer.tools.carry import CarryTool
 from src.bouncer.tools.read import ReadTools
 
 
@@ -43,10 +44,14 @@ class BouncerMCPServer(MCPServer):
         self.authorizer = authorizer or Authorizer(registry=self.registry)
         self.notion_adapter = notion_adapter or NotionAdapter(sandbox_mode=True)
         self.read_tools = ReadTools(adapter=self.notion_adapter)
+        self.carry_tool = CarryTool(
+            adapter=self.notion_adapter,
+            audit_sink=getattr(self.authorizer, "audit_sink", None),
+        )
         self.static_agent_id = static_agent_id
 
-        # Register standard read tools
-        self._register_read_tools()
+        # Register server tools
+        self._register_server_tools()
 
     def get_current_agent_id(self) -> Optional[str]:
         """Resolves active agent ID from static configuration or async context."""
@@ -60,8 +65,8 @@ class BouncerMCPServer(MCPServer):
         else:
             self.static_agent_id = agent_id_or_token
 
-    def _register_read_tools(self) -> None:
-        """Registers read tools on the MCP server instance."""
+    def _register_server_tools(self) -> None:
+        """Registers read tools and consent-gated carry tools on the MCP server instance."""
 
         @self.tool(
             name="read_tasks",
@@ -83,6 +88,19 @@ class BouncerMCPServer(MCPServer):
         )
         def read_comments(task_id: str) -> List[Dict[str, Any]]:
             return self.read_tools.read_comments(task_id=task_id)
+
+        @self.tool(
+            name="post_human_authored_comment",
+            description="Carries a human-authored comment into the work system guarded by a cryptographic consent token.",
+        )
+        def post_human_authored_comment(target_id: str, text: str, consent_token: str) -> Dict[str, Any]:
+            active_agent = self.get_current_agent_id() or "unknown"
+            return self.carry_tool.post_human_authored_comment(
+                target_id=target_id,
+                text=text,
+                consent_token=consent_token,
+                caller_agent_id=active_agent,
+            )
 
     async def list_tools(self) -> List[Tool]:
         """

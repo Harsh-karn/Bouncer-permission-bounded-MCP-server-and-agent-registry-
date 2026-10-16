@@ -128,6 +128,39 @@ class NotionAdapter:
             resp.raise_for_status()
             return resp.json().get("results", [])
 
+    def post_comment(self, task_id: str, text: str) -> Dict[str, Any]:
+        """
+        Carrier function: Inserts a comment onto a task page.
+        Only called AFTER valid human consent token verification.
+        Has no parameters or ability to change status, owner, or due date.
+        """
+        if self.sandbox_mode:
+            task = self._sandbox_tasks.get(task_id)
+            if not task:
+                raise NotionAdapterError(f"Task '{task_id}' not found.")
+            comment_id = f"c-{len(task.get('comments', [])) + 1}"
+            new_comment = {
+                "id": comment_id,
+                "author": "Human (via Bouncer Carrier)",
+                "text": text,
+            }
+            task.setdefault("comments", []).append(new_comment)
+            return {"status": "success", "comment": new_comment}
+
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(
+                f"{self.BASE_URL}/comments",
+                headers=self._headers(),
+                json={
+                    "parent": {"page_id": task_id},
+                    "rich_text": [{"text": {"content": text}}],
+                },
+            )
+            if resp.status_code in (401, 403):
+                raise NotionAuthorizationError(f"Notion Carrier 403: {resp.text}")
+            resp.raise_for_status()
+            return {"status": "success", "comment": resp.json()}
+
     def attempt_property_update(
         self, task_id: str, properties: Dict[str, Any], credential_ref: str = "notion_read_ro"
     ) -> Dict[str, Any]:
