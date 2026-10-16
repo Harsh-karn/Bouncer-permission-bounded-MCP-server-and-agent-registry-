@@ -1,0 +1,5 @@
+# Governance: Mandatory review on registry and security policy changes
+/registry/                   @Harsh-karn
+/docs/threat-model.md        @Harsh-karn
+/src/bouncer/authz.py        @Harsh-karn
+/src/bouncer/consent.py      @Harsh-karn

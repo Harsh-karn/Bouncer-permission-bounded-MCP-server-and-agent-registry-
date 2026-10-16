@@ -1,0 +1,53 @@
+version: "1.0"
+agents:
+  - id: weekly-digest
+    owner: harsh@example.com
+    tier: T0
+    tool_grant:
+      - read_tasks
+      - read_task
+      - read_comments
+    credential_ref: notion_read_ro
+    human_gate: none
+    eval_suite: gauntlet:weekly-digest
+    description: "Read-only agent that parses workspace task items and prepares internal analytics."
+
+  - id: triage-assistant
+    owner: harsh@example.com
+    tier: T1
+    tool_grant:
+      - read_tasks
+      - read_task
+      - read_comments
+      - create_draft
+    credential_ref: notion_read_ro
+    human_gate: review_before_send
+    eval_suite: gauntlet:triage-safety
+    description: "Produces drafted responses stored locally for human reviewer feedback."
+
+  - id: status-reporter
+    owner: harsh@example.com
+    tier: T2
+    tool_grant:
+      - read_tasks
+      - read_task
+      - read_comments
+      - post_human_authored_comment
+    credential_ref: notion_read_ro
+    human_gate: review_before_send
+    eval_suite: gauntlet:status-reporter
+    description: "Carries human-authored comments into work systems guarded by cryptographic consent tokens."
+
+  - id: incident-broadcaster
+    owner: harsh@example.com
+    tier: T3
+    tool_grant:
+      - read_tasks
+      - read_task
+      - read_comments
+      - post_human_authored_comment
+      - send_external_message
+    credential_ref: notion_read_ro
+    human_gate: approve_each_action
+    eval_suite: gauntlet:incident-broadcaster
+    description: "Emergency broadcast agent requiring human approval for every external action."
