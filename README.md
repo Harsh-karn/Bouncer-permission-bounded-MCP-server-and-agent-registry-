@@ -2,9 +2,10 @@
 
 > **A permission-bounded Model Context Protocol (MCP) server and agent registry where the forbidden write has no code path, proven by automated credential audits and prompt-injection red-team tests.**
 
+[![Governance Pipeline](https://github.com/Harsh-karn/Bouncer-permission-bounded-MCP-server-and-agent-registry-/actions/workflows/governance.yml/badge.svg)](https://github.com/Harsh-karn/Bouncer-permission-bounded-MCP-server-and-agent-registry-/actions/workflows/governance.yml)
 [![Governance](https://img.shields.io/badge/governance-structurally--enforced-blue.svg)](docs/threat-model.md)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-75%2F75%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-82%2F82%20passing-brightgreen.svg)](tests/)
 [![Audit](https://img.shields.io/badge/credential--audit-100%25%20blocked-brightgreen.svg)](audit/credential-audit.md)
 [![Red Team](https://img.shields.io/badge/red--team-0%20writes%20succeeded-brightgreen.svg)](tests/redteam/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -40,17 +41,17 @@ flowchart TD
     end
 
     subgraph Bouncer_Core ["Bouncer Governance MCP Server"]
-        Gate["1. Identify Agent from Bearer Token"]
+        Gate["1. Identify Agent from Bearer Token\n(Constant-Time SHA-256 API Key Matching)"]
         Filter["2. list_tools(): Dynamic Tool Surface\n(Only granted tools returned; forbidden tools hidden)"]
-        Authz["3. authorize(agent, tool, args)\nEnforces Tier Policy"]
-        Audit["4. Append-Only Decision Audit Log\n(SQL Triggers + Hash Chained prev_hash)"]
+        Authz["3. authorize(agent, tool, args)\nEnforces Tier Policy & Fail-Closed Logging"]
+        Audit["4. Append-Only Decision Audit Log\n(SQL Triggers + Hash Chained prev_hash + WAL Locking)"]
 
         Gate --> Filter --> Authz --> Audit
     end
 
     subgraph Execution_Boundary ["Structural Execution Boundary"]
         ReadTool["Read Tools (read_tasks, read_task, read_comments)"]
-        CarryTool["Carry Tool (post_human_authored_comment)\n- Verifies sha256(text)\n- Verifies Agent & Target Match\n- Atomically Consumes Nonce\n- Zero params for owner/date/status"]
+        CarryTool["Carry Tool (post_human_authored_comment)\n- Verifies sha256(text)\n- Verifies Agent & Target Match\n- Atomically Consumes Persistent Nonce\n- Zero params for owner/date/status"]
     end
 
     subgraph Work_Systems ["System of Record"]
@@ -95,15 +96,31 @@ Full details are documented in [`docs/threat-model.md`](docs/threat-model.md).
 |---|---|---|---|---|
 | **1** | **Agent sets owner, due date, or status** | Prompt injection in task text, model error, tool misuse | No such tool exists; credential has no update capability; audit proves 403 | Automated credential audit (`audit/credential-audit.md`) & `test_tool_surface.py` |
 | **2** | **Agent posts text a human never approved** | Model edits text after human approval | Consent token cryptographically binds `sha256(text)`. Any edit invalidates the token | `test_consent.py::test_tampered_text_rejected` |
-| **3** | **Consent token reused (Replay attack)** | Replay of intercepted token | Single-use nonce atomically stored in database, 10-minute short expiry | `test_consent.py::test_replay_attack_rejected` |
-| **4** | **Agent uses another agent's powers** | Stolen or guessed token | Per-agent bearer credentials, tool list filtered dynamically by identity, `authorize()` on every call | `test_authz.py::test_tool_not_in_grant_denied` |
+| **3** | **Consent token reused (Replay attack)** | Replay of intercepted token | Single-use nonce atomically stored in SQLite database, 10-minute short expiry | `test_consent.py::test_replay_attack_rejected` & `test_sqlite_nonce_store_cross_process_persistence` |
+| **4** | **Agent uses another agent's powers** | Stolen or guessed token | Cryptographic SHA-256 API key matching (`secrets.compare_digest`), tool list filtered dynamically by identity | `test_authz.py::test_tool_not_in_grant_denied` & `test_registry.py::test_cryptographic_api_key_bearer_token_resolution` |
 | **5** | **Unregistered agent runs** | Unreviewed agent launched informally | Server strictly refuses unknown identities; CI fails on incomplete registry entries | `test_authz.py::test_unregistered_agent_denied` |
 | **6** | **Silent policy change** | Edit permissions without review | Registry stored in YAML under version control, `CODEOWNERS` mandatory human review | `.github/CODEOWNERS` and CI schema validation |
 | **7** | **Audit log tampering** | Rogue agent or operator deletes rows | Append-only database triggers (prohibiting UPDATE/DELETE), cryptographic hash chaining (`prev_hash`) | `test_audit.py::test_immutability_triggers_reject_update` |
+| **8** | **Audit failure blind spot** | Disk full or DB locked during execution | Authorizer strictly fails closed (`AUDIT_FAILURE_FAIL_CLOSED`), denying execution if logging fails | `test_authz.py::test_fail_closed_when_audit_log_fails` |
+| **9** | **Cross-tenant connection bleed** | Shared server in multi-agent deployment | `BouncerAuthMiddleware` isolates active agent via async `ContextVar` per HTTP/SSE request | `test_server.py::test_bouncer_auth_middleware_scopes_context` |
 
 ---
 
-## 5. Automated Credential Audit Results
+## 5. Security Engineering & Hardening
+
+Bouncer undergoes continuous rigorous hardening against production failure modes:
+
+* **Cryptographic Agent Authentication:** Bearer tokens are resolved via constant-time SHA-256 digests (`secrets.compare_digest`) against pre-registered hashes in `registry/agents.yaml`, eliminating timing attacks and token guessing.
+* **Persistent SQLite Nonce Storage (`SqliteNonceStore`):** Consent token nonces are committed immediately to disk using SQLite `PRIMARY KEY` uniqueness constraints, ensuring replay attacks fail even across server reboots, container redeployments, and horizontal processes.
+* **Fail-Closed Audit Pipeline:** If the audit subsystem fails to record a decision (e.g., disk exhaustion, database lock timeout), the authorization engine intercepts the failure and **fails closed** (`AUDIT_FAILURE_FAIL_CLOSED`). Unaudited tool execution is impossible.
+* **Concurrency Locking & Block Chain Integrity:** Audit entries are serialized with thread locks and SQLite `BEGIN IMMEDIATE` transactions in WAL mode, guaranteeing zero forks in the cryptographic hash chain (`prev_hash`).
+* **Canonical JSON Digesting:** Hash chaining serializes block payloads using canonical JSON (`separators=(",", ":")`, sorted keys), eliminating delimiter collision and injection vulnerabilities.
+* **Multi-Tenant ASGI Middleware (`BouncerAuthMiddleware`):** Isolates caller identities per HTTP/SSE connection via Python `ContextVar`, preventing tenant credential bleed in shared deployments.
+* **Production Fail-Closed Secrets:** The consent signing key `BOUNCER_CONSENT_SECRET` strictly requires explicit configuration in production mode (`ENV=production`), immediately terminating startup if unconfigured.
+
+---
+
+## 6. Automated Credential Audit Results
 
 To prove that governance is enforced at the credential layer, Bouncer runs an automated credential audit script ([`scripts/audit_credentials.py`](scripts/audit_credentials.py)) that attempts every forbidden operation across every registered agent:
 
@@ -130,7 +147,7 @@ Full report committed at [`audit/credential-audit.md`](audit/credential-audit.md
 
 ---
 
-## 6. Notion vs. GitHub Carrier Pattern Comparison
+## 7. Notion vs. GitHub Carrier Pattern Comparison
 
 A critical design consideration when building Bouncer was the disparity in permission models between work systems:
 
@@ -145,7 +162,7 @@ See [`docs/adr/0001-why-notion-primary.md`](docs/adr/0001-why-notion-primary.md)
 
 ---
 
-## 7. Quickstart & CLI Commands
+## 8. Quickstart & CLI Commands
 
 ### 1. Installation
 
@@ -184,7 +201,7 @@ bouncer audit --agent weekly-digest --since 7d --verify
 ### 5. Run Full Test Suite & Red-Team Attacks
 
 ```bash
-# Run all 75 unit, architecture, and invariant tests
+# Run all 82 unit, architecture, and invariant tests
 pytest -v
 
 # Run the 12-payload adversarial prompt-injection suite
@@ -196,7 +213,7 @@ python scripts/audit_credentials.py
 
 ---
 
-## 8. Architecture Decision Records (ADRs)
+## 9. Architecture Decision Records (ADRs)
 
 * [ADR 0001: Why Notion as Primary Work System](docs/adr/0001-why-notion-primary.md)
 * [ADR 0002: Carrier Pattern for Coarse-Scope APIs (GitHub Issues)](docs/adr/0002-carrier-pattern-for-github.md)
@@ -205,18 +222,19 @@ python scripts/audit_credentials.py
 
 ---
 
-## 9. Interview Talking Points & Resume Bullets
+## 10. Interview Talking Points & Resume Bullets
 
 ### Resume Bullets
 * **Authored an MCP governance server with risk-tiered, least-privilege tool grants**, ensuring AI agents cannot write commitments (owners, due dates, statuses); verified by automated credential audits and 12 prompt-injection red-team payloads with zero successful writes.
-* **Designed a cryptographic human review gate using signed, single-use tokens** bound to a SHA-256 hash of the exact human-approved text, preventing post-approval text tampering, target confusion, and replay attacks.
+* **Designed a cryptographic human review gate using signed, single-use tokens** bound to a SHA-256 hash of the exact human-approved text, preventing post-approval text tampering, target confusion, and replay attacks across server restarts.
 * **Built an agent registry and validator enforcing owner, risk tier, tool grant, and human gate** for every agent, backed by an append-only decision audit log with cryptographic hash chaining (`prev_hash`) queryable per agent.
+* **Architected fail-closed execution barriers and concurrency-safe block chaining**, ensuring tool requests without auditable records are blocked, and multi-tenant ASGI requests remain isolated via asynchronous context propagation.
 
 ### Key Questions & Answers
 * **Q: Why is a prompt instruction not enough?**  
   *A:* Prompt instructions fail against jailbreaks, direct injection, and indirect data poisoning. In Bouncer, governance is structural: the forbidden write tool does not exist on the protocol surface, and the agent's credentials lack write capabilities at the API layer.
 * **Q: What stops the carrier from being abused if the agent is compromised?**  
-  *A:* The carrier only accepts calls accompanied by an unexpired, cryptographically signed token issued by a human reviewer. The token binds `sha256(text)` and target ID, and its single-use nonce is atomically consumed upon first execution, preventing modification or replay.
+  *A:* The carrier only accepts calls accompanied by an unexpired, cryptographically signed token issued by a human reviewer. The token binds `sha256(text)` and target ID, and its single-use nonce is atomically consumed upon first execution in persistent SQLite storage, preventing modification or replay.
 * **Q: How does Bouncer handle work systems without fine-grained scopes?**  
   *A:* For coarse APIs like GitHub (`Issues: write`), Bouncer encapsulates the credential within an isolated Carrier client whose HTTP transport is constrained by a strict regex allowlist admitting only `POST .../issues/{id}/comments`.
 
@@ -225,3 +243,4 @@ python scripts/audit_credentials.py
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
