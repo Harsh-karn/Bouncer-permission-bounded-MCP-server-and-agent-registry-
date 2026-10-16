@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bouncer"
+version = "0.1.0"
+description = "A permission-bounded MCP server and agent registry where the forbidden write has no code path."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Harsh Karn", email = "harshkarn12345@gmail.com" }
+]
+keywords = [
+    "mcp",
+    "security",
+    "agent-governance",
+    "model-context-protocol",
+    "least-privilege",
+    "prompt-injection-defense",
+    "audit-log"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13"
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "pyyaml>=6.0.1",
+    "pyjwt>=2.8.0",
+    "cryptography>=42.0.0",
+    "httpx>=0.27.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+bouncer = "bouncer.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bouncer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
