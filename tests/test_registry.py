@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from registry.schema import AgentEntry, AgentRegistryFile, FORBIDDEN_TOOLS, HumanGate, Tier
-from src.bouncer.registry import AgentNotFoundError, AgentRegistry, RegistryValidationError
+from bouncer.registry import AgentNotFoundError, AgentRegistry, RegistryValidationError
 
 
 def test_valid_manifest_loads_successfully():

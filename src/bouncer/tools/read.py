@@ -4,7 +4,7 @@ Allows agents to inspect tasks and comments without any write capabilities.
 """
 
 from typing import Any, Dict, List, Optional
-from src.bouncer.adapters.notion import NotionAdapter
+from bouncer.adapters.notion import NotionAdapter
 
 
 class ReadTools:

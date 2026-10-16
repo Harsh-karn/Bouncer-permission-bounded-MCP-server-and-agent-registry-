@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from registry.schema import FORBIDDEN_TOOLS
-from src.bouncer.authz import AuthorizationError, Authorizer
-from src.bouncer.registry import AgentRegistry
+from bouncer.authz import AuthorizationError, Authorizer
+from bouncer.registry import AgentRegistry
 
 
 @pytest.fixture

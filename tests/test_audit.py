@@ -8,14 +8,14 @@ from pathlib import Path
 import sqlite3
 import pytest
 
-from src.bouncer.audit import (
+from bouncer.audit import (
     AuditImmutabilityError,
     AuditLog,
     GENESIS_HASH,
     compute_row_hash,
 )
-from src.bouncer.authz import Authorizer
-from src.bouncer.registry import AgentRegistry
+from bouncer.authz import Authorizer
+from bouncer.registry import AgentRegistry
 
 
 @pytest.fixture

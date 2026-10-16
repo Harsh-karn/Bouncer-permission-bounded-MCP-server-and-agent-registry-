@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from registry.schema import FORBIDDEN_TOOLS, Tier
-from src.bouncer.registry import AgentRegistry
-from src.bouncer.server import BouncerMCPServer, create_agent_server
+from bouncer.registry import AgentRegistry
+from bouncer.server import BouncerMCPServer, create_agent_server
 
 
 @pytest.fixture

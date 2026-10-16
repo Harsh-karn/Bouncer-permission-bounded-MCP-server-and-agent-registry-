@@ -10,11 +10,11 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import Tool
 
 from registry.schema import FORBIDDEN_TOOLS
-from src.bouncer.adapters.notion import NotionAdapter
-from src.bouncer.authz import AuthorizationError, Authorizer
-from src.bouncer.registry import AgentRegistry
-from src.bouncer.tools.carry import CarryTool
-from src.bouncer.tools.read import ReadTools
+from bouncer.adapters.notion import NotionAdapter
+from bouncer.authz import AuthorizationError, Authorizer
+from bouncer.registry import AgentRegistry
+from bouncer.tools.carry import CarryTool
+from bouncer.tools.read import ReadTools
 
 
 # Context variable tracking the currently authenticated caller agent

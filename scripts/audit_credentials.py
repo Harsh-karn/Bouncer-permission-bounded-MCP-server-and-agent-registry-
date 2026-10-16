@@ -14,8 +14,8 @@ from typing import Any, Dict, List
 # Ensure src is in python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.bouncer.adapters.notion import NotionAdapter
-from src.bouncer.registry import AgentRegistry
+from bouncer.adapters.notion import NotionAdapter
+from bouncer.registry import AgentRegistry
 
 
 FORBIDDEN_OPERATIONS = [

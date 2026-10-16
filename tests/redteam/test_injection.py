@@ -13,16 +13,16 @@ import pytest
 import yaml
 
 from scripts.audit_credentials import CredentialAuditRunner
-from src.bouncer.adapters.notion import NotionAdapter
-from src.bouncer.audit import AuditLog
-from src.bouncer.authz import AuthorizationError, Authorizer
-from src.bouncer.consent import (
+from bouncer.adapters.notion import NotionAdapter
+from bouncer.audit import AuditLog
+from bouncer.authz import AuthorizationError, Authorizer
+from bouncer.consent import (
     ConsentError,
     NonceStore,
     issue_consent_token,
 )
-from src.bouncer.registry import AgentRegistry
-from src.bouncer.server import create_agent_server
+from bouncer.registry import AgentRegistry
+from bouncer.server import create_agent_server
 
 
 PAYLOADS_FILE = Path("tests/redteam/payloads.yaml")

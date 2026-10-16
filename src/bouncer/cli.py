@@ -5,18 +5,24 @@ and audit trail inspection.
 """
 
 from pathlib import Path
+import sys
 from typing import Optional
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.bouncer.consent import (
+# Ensure package root is resolved
+_root = Path(__file__).resolve().parent.parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from bouncer.consent import (
     DEFAULT_SECRET,
     compute_text_sha256,
     issue_consent_token,
 )
-from src.bouncer.registry import AgentRegistry, RegistryValidationError
+from bouncer.registry import AgentRegistry, RegistryValidationError
 
 
 app = typer.Typer(
@@ -133,7 +139,7 @@ def audit_cmd(
     Queries the append-only decision audit log to answer 'who did what and when'.
     Also verifies cryptographic hash-chain integrity.
     """
-    from src.bouncer.audit import AuditLog
+    from bouncer.audit import AuditLog
 
     if not db_path.exists():
         console.print(f"[bold yellow]Audit database not found at {db_path}. No records logged yet.[/]")

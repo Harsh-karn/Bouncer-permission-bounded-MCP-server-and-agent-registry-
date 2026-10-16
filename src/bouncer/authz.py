@@ -6,8 +6,8 @@ Evaluates agent identity, risk tier boundaries, and tool grants on every MCP too
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 from registry.schema import ALLOWED_TOOLS_BY_TIER, FORBIDDEN_TOOLS, Tier
-from src.bouncer.registry import AgentRegistry
-from src.bouncer.audit import AuditLog
+from bouncer.registry import AgentRegistry
+from bouncer.audit import AuditLog
 
 
 @dataclass

@@ -8,17 +8,17 @@ import inspect
 from pathlib import Path
 import pytest
 
-from src.bouncer.adapters.notion import NotionAdapter
-from src.bouncer.authz import Authorizer
-from src.bouncer.consent import (
+from bouncer.adapters.notion import NotionAdapter
+from bouncer.authz import Authorizer
+from bouncer.consent import (
     ConsentError,
     NonceStore,
     issue_consent_token,
     verify_and_consume_consent_token,
 )
-from src.bouncer.registry import AgentRegistry
-from src.bouncer.server import create_agent_server
-from src.bouncer.tools.carry import CarryTool
+from bouncer.registry import AgentRegistry
+from bouncer.server import create_agent_server
+from bouncer.tools.carry import CarryTool
 
 
 @pytest.fixture

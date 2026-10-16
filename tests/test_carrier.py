@@ -6,12 +6,12 @@ and fine-grained integrations (Notion) reject property updates at the credential
 
 import pytest
 
-from src.bouncer.adapters.github import (
+from bouncer.adapters.github import (
     CarrierAllowlistViolationError,
     GitHubAdapter,
     GitHubCarrierClient,
 )
-from src.bouncer.adapters.notion import NotionAdapter
+from bouncer.adapters.notion import NotionAdapter
 
 
 def test_github_carrier_allows_comment_endpoint():

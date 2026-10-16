@@ -5,8 +5,8 @@ Structurally eliminates parameters for owner, status, due date, or page assignme
 """
 
 from typing import Any, Callable, Dict, Optional
-from src.bouncer.adapters.notion import NotionAdapter
-from src.bouncer.consent import (
+from bouncer.adapters.notion import NotionAdapter
+from bouncer.consent import (
     ConsentError,
     NonceStore,
     verify_and_consume_consent_token,
