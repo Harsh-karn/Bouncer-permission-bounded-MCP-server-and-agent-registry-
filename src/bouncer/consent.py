@@ -1,20 +1,39 @@
 """
 Bouncer Cryptographic Consent Engine.
 Issues and validates signed, single-use consent tokens bound to exact text sha256.
-Enforces non-replayability via atomic nonce consumption and short TTL.
+Enforces non-replayability via atomic persistent nonce consumption and short TTL.
 """
 
 from dataclasses import dataclass
 import hashlib
 import os
+from pathlib import Path
+import sqlite3
 import time
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Protocol
 import uuid
 import jwt
 
 
-DEFAULT_SECRET = os.getenv("BOUNCER_CONSENT_SECRET", "bouncer-dev-consent-signing-key-32bytes!")
+DEFAULT_DEV_SECRET = "bouncer-dev-consent-signing-key-32bytes!"
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
+
+
+def get_consent_secret() -> str:
+    """
+    Retrieves the HMAC secret key for signing consent tokens.
+    Fails closed in production environments if unconfigured.
+    """
+    secret = os.getenv("BOUNCER_CONSENT_SECRET")
+    if not secret:
+        env_mode = os.getenv("ENV", os.getenv("BOUNCER_ENV", "development")).lower()
+        if env_mode in ("production", "prod"):
+            raise RuntimeError(
+                "CRITICAL SECURITY CONFIGURATION ERROR: "
+                "BOUNCER_CONSENT_SECRET must be explicitly set in production environments."
+            )
+        return DEFAULT_DEV_SECRET
+    return secret
 
 
 try:
@@ -55,19 +74,21 @@ class ConsentVerificationResult:
     claims: Optional[Dict[str, Any]] = None
 
 
-class NonceStore:
-    """Thread-safe storage tracking consumed token nonces to prevent replay attacks."""
+class BaseNonceStore(Protocol):
+    def consume(self, nonce: str, expires_at: float) -> bool:
+        ...
+    def is_consumed(self, nonce: str) -> bool:
+        ...
+
+
+class InMemoryNonceStore:
+    """Thread-safe in-memory storage tracking consumed token nonces."""
 
     def __init__(self):
-        self._consumed: Dict[str, float] = {}  # nonce -> expiry timestamp
+        self._consumed: Dict[str, float] = {}
 
     def consume(self, nonce: str, expires_at: float) -> bool:
-        """
-        Atomically attempts to consume a nonce.
-        Returns True if newly consumed, False if already used.
-        """
         now = time.time()
-        # Clean expired nonces occasionally
         if len(self._consumed) > 1000:
             self._consumed = {n: exp for n, exp in self._consumed.items() if exp > now}
 
@@ -81,8 +102,64 @@ class NonceStore:
         return nonce in self._consumed
 
 
-# Global singleton nonce store for the process
-GLOBAL_NONCE_STORE = NonceStore()
+class SqliteNonceStore:
+    """
+    Persistent, restart-proof and multi-process nonce store backed by SQLite.
+    Prevents token replay attacks across process restarts and horizontal workers.
+    """
+
+    def __init__(self, db_path: Path = Path("bouncer_audit.db")):
+        self.db_path = str(db_path)
+        self._init_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        return conn
+
+    def _init_db(self) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS consent_nonces (
+                    nonce TEXT PRIMARY KEY,
+                    consumed_at REAL NOT NULL,
+                    expires_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_nonces_expires ON consent_nonces(expires_at)")
+            conn.commit()
+
+    def consume(self, nonce: str, expires_at: float) -> bool:
+        """
+        Atomically records nonce into database using PRIMARY KEY uniqueness.
+        Returns True if newly inserted, False if already consumed.
+        """
+        now = time.time()
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO consent_nonces (nonce, consumed_at, expires_at) VALUES (?, ?, ?)",
+                    (nonce, now, expires_at),
+                )
+                conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            # Primary key collision means nonce was already consumed
+            return False
+
+    def is_consumed(self, nonce: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM consent_nonces WHERE nonce = ?", (nonce,))
+            return cursor.fetchone() is not None
+
+
+# Backwards-compatible alias
+NonceStore = InMemoryNonceStore
+
+# Global singleton persistent nonce store
+GLOBAL_NONCE_STORE = SqliteNonceStore()
 
 
 def compute_text_sha256(text: str) -> str:
@@ -95,7 +172,7 @@ def issue_consent_token(
     target_id: str,
     text: str,
     approver: str,
-    secret: str = DEFAULT_SECRET,
+    secret: Optional[str] = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     custom_nonce: Optional[str] = None,
 ) -> str:
@@ -113,6 +190,7 @@ def issue_consent_token(
     now = int(time.time())
     nonce = custom_nonce or str(uuid.uuid4())
     text_hash = compute_text_sha256(text)
+    active_secret = secret or get_consent_secret()
 
     payload = {
         "agent_id": agent_id,
@@ -124,7 +202,7 @@ def issue_consent_token(
         "jti": nonce,
     }
 
-    token = jwt.encode(payload, secret, algorithm="HS256")
+    token = jwt.encode(payload, active_secret, algorithm="HS256")
     return token
 
 
@@ -133,20 +211,21 @@ def verify_and_consume_consent_token(
     expected_agent_id: str,
     expected_target_id: str,
     actual_text: str,
-    secret: str = DEFAULT_SECRET,
-    nonce_store: Optional[NonceStore] = None,
+    secret: Optional[str] = None,
+    nonce_store: Optional[Any] = None,
 ) -> ConsentVerificationResult:
     """
     Validates signature, expiration, agent/target matching, text hash integrity,
     and atomically consumes the nonce.
     """
     store = nonce_store or GLOBAL_NONCE_STORE
+    active_secret = secret or get_consent_secret()
 
     # 1. Decode & Verify JWT signature and expiration
     try:
         claims = jwt.decode(
             token,
-            secret,
+            active_secret,
             algorithms=["HS256"],
             options={"require": ["agent_id", "target_id", "text_sha256", "approver", "exp", "jti"]},
         )

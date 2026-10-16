@@ -10,6 +10,7 @@ agents:
     credential_ref: notion_read_ro
     human_gate: none
     eval_suite: gauntlet:weekly-digest
+    api_key_hash: "cf3bf100ed04dcb55ba2d2fdb96154a69a8680213436b769d7a5998923914a56"
     description: "Read-only agent that parses workspace task items and prepares internal analytics."
 
   - id: triage-assistant
@@ -23,6 +24,7 @@ agents:
     credential_ref: notion_read_ro
     human_gate: review_before_send
     eval_suite: gauntlet:triage-safety
+    api_key_hash: "9c16bd7b400b5530f35934b842e6280e7b5378d6f76059bc3b9e84bd76fadc78"
     description: "Produces drafted responses stored locally for human reviewer feedback."
 
   - id: status-reporter
@@ -36,6 +38,7 @@ agents:
     credential_ref: notion_read_ro
     human_gate: review_before_send
     eval_suite: gauntlet:status-reporter
+    api_key_hash: "96df38d716b0d450b7e67f88a2584c2d7548a56c34410ae78e912acc6887d039"
     description: "Carries human-authored comments into work systems guarded by cryptographic consent tokens."
 
   - id: incident-broadcaster
@@ -50,4 +53,5 @@ agents:
     credential_ref: notion_read_ro
     human_gate: approve_each_action
     eval_suite: gauntlet:incident-broadcaster
+    api_key_hash: "a0a3594032aafedd02d5708cfa8b7146c7bbf398dc35526e0e0dd656824d38cf"
     description: "Emergency broadcast agent requiring human approval for every external action."

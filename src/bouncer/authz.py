@@ -63,8 +63,7 @@ class Authorizer:
                 reason=f"FORBIDDEN_TOOL_HARD_BLOCK: Tool '{tool_name}' is in the forbidden write set.",
                 agent_id=token_or_agent_id,
             )
-            self._record_audit(res, tool_name, args)
-            return res
+            return self._record_audit(res, tool_name, args)
 
         # 2. Identify agent from token or ID
         agent = self.registry.resolve_agent_from_bearer_token(token_or_agent_id)
@@ -74,8 +73,7 @@ class Authorizer:
                 decision="deny",
                 reason=f"UNREGISTERED_AGENT: Caller identity '{token_or_agent_id}' is not in the registry.",
             )
-            self._record_audit(res, tool_name, args)
-            return res
+            return self._record_audit(res, tool_name, args)
 
         # 3. Check tool is in agent's explicit grant
         if clean_name not in agent.tool_grant:
@@ -86,8 +84,7 @@ class Authorizer:
                 agent_id=agent.id,
                 tier=agent.tier.value,
             )
-            self._record_audit(res, tool_name, args)
-            return res
+            return self._record_audit(res, tool_name, args)
 
         # 4. Check tier boundary
         tier_allowed = ALLOWED_TOOLS_BY_TIER.get(agent.tier, set())
@@ -99,8 +96,7 @@ class Authorizer:
                 agent_id=agent.id,
                 tier=agent.tier.value,
             )
-            self._record_audit(res, tool_name, args)
-            return res
+            return self._record_audit(res, tool_name, args)
 
         # 5. Authorization granted
         res = AuthzResult(
@@ -110,8 +106,7 @@ class Authorizer:
             agent_id=agent.id,
             tier=agent.tier.value,
         )
-        self._record_audit(res, tool_name, args)
-        return res
+        return self._record_audit(res, tool_name, args)
 
     def authorize_or_raise(
         self,
@@ -125,8 +120,8 @@ class Authorizer:
             raise AuthorizationError(result)
         return result
 
-    def _record_audit(self, result: AuthzResult, tool_name: str, arguments: Dict[str, Any]) -> None:
-        """Dispatches decision to the audit log and sink."""
+    def _record_audit(self, result: AuthzResult, tool_name: str, arguments: Dict[str, Any]) -> AuthzResult:
+        """Dispatches decision to the audit log and sink. Fails closed if audit logging fails."""
         if self.audit_log:
             try:
                 self.audit_log.log(
@@ -136,8 +131,11 @@ class Authorizer:
                     reason=result.reason,
                     arguments=arguments,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                # Security Fail-Closed: Never permit unaudited execution
+                result.allowed = False
+                result.decision = "deny"
+                result.reason = f"AUDIT_FAILURE_FAIL_CLOSED: Audit logging failed ({e}). Action denied."
 
         if self.audit_sink:
             try:
@@ -151,3 +149,4 @@ class Authorizer:
                 })
             except Exception:
                 pass
+        return result

@@ -10,7 +10,7 @@ from registry.schema import FORBIDDEN_TOOLS
 from bouncer.adapters.notion import NotionAdapter
 from bouncer.authz import AuthorizationError, Authorizer
 from bouncer.registry import AgentRegistry
-from bouncer.server import BouncerMCPServer, create_agent_server
+from bouncer.server import BouncerAuthMiddleware, BouncerMCPServer, create_agent_server, current_agent_id_ctx
 
 
 @pytest.fixture
@@ -90,3 +90,36 @@ async def test_server_call_tool_denied_for_forbidden_tool(registry, authorizer, 
         await server.call_tool("set_owner", {"owner": "attacker"})
 
     assert "FORBIDDEN_TOOL_HARD_BLOCK" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_bouncer_auth_middleware_scopes_context(registry, authorizer, notion_adapter):
+    """BouncerAuthMiddleware extracts Authorization bearer token and sets current_agent_id_ctx."""
+    server = BouncerMCPServer(registry=registry, authorizer=authorizer, notion_adapter=notion_adapter)
+
+    observed_agent = None
+
+    async def dummy_app(scope, receive, send):
+        nonlocal observed_agent
+        observed_agent = server.get_current_agent_id()
+
+    middleware = BouncerAuthMiddleware(app=dummy_app, registry=registry)
+
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"authorization", b"Bearer bouncer-weekly-digest-key"),
+        ],
+    }
+
+    # Before middleware execution, context is empty
+    assert current_agent_id_ctx.get() is None
+
+    await middleware(scope, None, None)
+
+    # During execution, dummy_app observed "weekly-digest"
+    assert observed_agent == "weekly-digest"
+
+    # After middleware execution, context is cleanly reset
+    assert current_agent_id_ctx.get() is None
+

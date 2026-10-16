@@ -241,3 +241,44 @@ async def test_end_to_end_carry_execution_on_server():
     # Verify comment was added to the task
     comments = notion_adapter.read_comments("task-101")
     assert any(c["text"] == comment_text for c in comments)
+
+
+def test_sqlite_nonce_store_cross_process_persistence(tmp_path):
+    """
+    Two distinct SqliteNonceStore instances referencing the same DB file
+    share consumed nonce state, preventing restart/cross-worker replay.
+    """
+    from bouncer.consent import SqliteNonceStore
+    import time
+
+    db_path = tmp_path / "shared_nonces.db"
+    store1 = SqliteNonceStore(db_path=db_path)
+    store2 = SqliteNonceStore(db_path=db_path)
+
+    nonce = "test-cross-instance-nonce-123"
+    exp = time.time() + 600
+
+    # Store 1 consumes the nonce
+    assert store1.consume(nonce, exp) is True
+
+    # Store 2 immediately observes that the nonce is already consumed
+    assert store2.is_consumed(nonce) is True
+
+    # Store 2 attempts to consume same nonce: rejected
+    assert store2.consume(nonce, exp) is False
+
+
+def test_production_mode_fails_closed_without_consent_secret(monkeypatch):
+    """
+    FAIL-CLOSED: In production mode, get_consent_secret() MUST raise RuntimeError
+    if BOUNCER_CONSENT_SECRET is not explicitly set.
+    """
+    from bouncer.consent import get_consent_secret
+
+    monkeypatch.delenv("BOUNCER_CONSENT_SECRET", raising=False)
+    monkeypatch.setenv("ENV", "production")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        get_consent_secret()
+    assert "CRITICAL SECURITY CONFIGURATION ERROR" in str(exc_info.value)
+

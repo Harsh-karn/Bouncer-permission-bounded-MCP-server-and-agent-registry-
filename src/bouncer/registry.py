@@ -3,8 +3,10 @@ Bouncer Agent Registry Loader & Validator.
 Enforces runtime agent lookup, grant resolution, and file validation.
 """
 
+import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Union
+import secrets
+from typing import Dict, List, Optional, Set, Tuple, Union
 import yaml
 from pydantic import ValidationError
 
@@ -89,16 +91,31 @@ class AgentRegistry:
     def resolve_agent_from_bearer_token(self, token: str) -> Optional[AgentEntry]:
         """
         Resolves an agent from a bearer token.
-        Supports standard tokens formatted as:
-          - 'agent:<agent_id>'
-          - 'Bearer agent:<agent_id>'
-          - 'bouncer-<agent_id>-token'
-          - direct agent ID match
+        Supports:
+          1. Cryptographic API keys hashed with SHA-256 and matched via constant-time comparison.
+          2. Development convenience tokens formatted as:
+             - 'agent:<agent_id>'
+             - 'Bearer agent:<agent_id>'
+             - 'bouncer-<agent_id>-token'
+             - direct agent ID match
         """
         cleaned = token.strip()
         if cleaned.lower().startswith("bearer "):
             cleaned = cleaned[7:].strip()
 
+        token_hash = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()
+
+        # 1. Cryptographic API key check (constant-time)
+        matched_agent = None
+        for agent in self._agents.values():
+            if agent.api_key_hash and secrets.compare_digest(token_hash, agent.api_key_hash):
+                matched_agent = agent
+                break
+
+        if matched_agent:
+            return matched_agent
+
+        # 2. Development / legacy prefix match
         if cleaned.startswith("agent:"):
             target_id = cleaned.split(":", 1)[1]
             return self.get_agent(target_id)

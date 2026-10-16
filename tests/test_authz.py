@@ -83,3 +83,23 @@ def test_authorize_or_raise_throws_on_deny(authorizer):
     with pytest.raises(AuthorizationError) as exc_info:
         authorizer.authorize_or_raise("weekly-digest", "set_owner", {"owner": "me"})
     assert "FORBIDDEN_TOOL_HARD_BLOCK" in str(exc_info.value)
+
+
+def test_fail_closed_when_audit_log_fails(registry):
+    """FAIL-CLOSED: If the audit logger throws an error, the authorization MUST be denied."""
+    class FailingAuditLog:
+        def log(self, *args, **kwargs):
+            raise IOError("Simulated disk full or DB corruption error")
+
+    authorizer = Authorizer(registry=registry, audit_log=FailingAuditLog())
+
+    # Even though weekly-digest is allowed to read_tasks, audit failure forces FAIL-CLOSED
+    res = authorizer.authorize("weekly-digest", "read_tasks")
+    assert res.allowed is False
+    assert res.decision == "deny"
+    assert "AUDIT_FAILURE_FAIL_CLOSED" in res.reason
+
+    with pytest.raises(AuthorizationError) as exc_info:
+        authorizer.authorize_or_raise("weekly-digest", "read_tasks")
+    assert "AUDIT_FAILURE_FAIL_CLOSED" in str(exc_info.value)
+

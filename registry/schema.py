@@ -62,6 +62,7 @@ class AgentEntry(BaseModel):
     credential_ref: str = Field(..., min_length=2, description="Name of secret identifier, never the secret itself")
     human_gate: HumanGate = Field(..., description="Required human gate mechanism")
     eval_suite: str = Field(..., min_length=3, description="Evaluation suite identifier (e.g. gauntlet:weekly-digest)")
+    api_key_hash: Optional[str] = Field(None, description="SHA-256 hash of agent bearer API key for cryptographic authentication")
     description: Optional[str] = Field(None, description="Optional description of the agent's purpose")
 
     @field_validator("owner")

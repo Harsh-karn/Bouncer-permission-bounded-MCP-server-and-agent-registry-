@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 import uuid
 
@@ -47,11 +48,11 @@ class AuditRecord:
 
 
 def compute_args_sha256(args: Optional[Dict[str, Any]]) -> str:
-    """Computes a deterministic SHA-256 digest of tool invocation arguments."""
+    """Computes a deterministic SHA-256 digest of tool invocation arguments using canonical JSON."""
     if not args:
         return hashlib.sha256(b"{}").hexdigest()
     try:
-        serialized = json.dumps(args, sort_keys=True, default=str)
+        serialized = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=False)
     except Exception:
         serialized = str(sorted(args.items()))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -65,43 +66,51 @@ def compute_row_hash(
     args_sha256: str,
     decision: str,
     reason: str,
-    consent_nonce: Optional[str],
-    run_id: Optional[str],
+    consent_nonce: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> str:
-    """Computes cryptographic block digest binding previous row hash and current row payload."""
-    payload = "|".join([
-        prev_hash,
-        ts,
-        agent_id,
-        tool,
-        args_sha256,
-        decision,
-        reason,
-        consent_nonce or "",
-        run_id or "",
-    ])
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    """
+    Computes cryptographic block digest binding previous row hash and current row payload.
+    Uses canonical JSON serialization with sorted keys and compact separators to prevent
+    delimiter collision attacks.
+    """
+    payload_dict = {
+        "args_sha256": args_sha256,
+        "agent_id": agent_id,
+        "consent_nonce": consent_nonce or "",
+        "decision": decision,
+        "prev_hash": prev_hash,
+        "reason": reason,
+        "run_id": run_id or "",
+        "tool": tool,
+        "ts": ts,
+    }
+    canonical_json = json.dumps(payload_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
 class AuditLog:
     """
-    Append-only decision audit log backed by SQLite with SQL trigger immutability
-    and cryptographic hash chaining.
+    Append-only decision audit log backed by SQLite with SQL trigger immutability,
+    thread-safe transaction locking, and cryptographic hash chaining.
     """
 
     def __init__(self, db_path: Union[str, Path] = DEFAULT_DB_PATH):
         self.db_path = str(db_path)
+        self._lock = threading.Lock()
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=15.0)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
-        """Initializes tables and immutability triggers."""
+        """Initializes tables, immutability triggers, and WAL mode."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA busy_timeout=15000;")
             # 1. Audit Log Table
             cursor.execute(
                 """
@@ -169,62 +178,74 @@ class AuditLog:
     ) -> AuditRecord:
         """
         Appends an immutable audit decision to the log with hash chaining.
+        Protected by an in-process thread lock and SQLite BEGIN IMMEDIATE transaction
+        to guarantee atomic serialization without hash chain forks.
         """
         record_id = str(uuid.uuid4())
         ts_str = (timestamp or datetime.now(timezone.utc)).isoformat()
         args_hash = compute_args_sha256(arguments)
-        prev_hash = self.get_latest_row_hash()
 
-        row_hash = compute_row_hash(
-            prev_hash=prev_hash,
-            ts=ts_str,
-            agent_id=agent_id,
-            tool=tool,
-            args_sha256=args_hash,
-            decision=decision,
-            reason=reason,
-            consent_nonce=consent_nonce,
-            run_id=run_id,
-        )
+        with self._lock:
+            with self._get_connection() as conn:
+                conn.isolation_level = None  # Explicit transaction boundary
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    cursor.execute("SELECT row_hash FROM audit_log ORDER BY rowid DESC LIMIT 1")
+                    latest = cursor.fetchone()
+                    prev_hash = latest["row_hash"] if latest else GENESIS_HASH
 
-        record = AuditRecord(
-            id=record_id,
-            ts=ts_str,
-            agent_id=agent_id,
-            tool=tool,
-            args_sha256=args_hash,
-            decision=decision,
-            reason=reason,
-            consent_nonce=consent_nonce,
-            run_id=run_id,
-            prev_hash=prev_hash,
-            row_hash=row_hash,
-        )
+                    row_hash = compute_row_hash(
+                        prev_hash=prev_hash,
+                        ts=ts_str,
+                        agent_id=agent_id,
+                        tool=tool,
+                        args_sha256=args_hash,
+                        decision=decision,
+                        reason=reason,
+                        consent_nonce=consent_nonce,
+                        run_id=run_id,
+                    )
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO audit_log (
-                    id, ts, agent_id, tool, args_sha256, decision, reason,
-                    consent_nonce, run_id, prev_hash, row_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record.id,
-                    record.ts,
-                    record.agent_id,
-                    record.tool,
-                    record.args_sha256,
-                    record.decision,
-                    record.reason,
-                    record.consent_nonce,
-                    record.run_id,
-                    record.prev_hash,
-                    record.row_hash,
-                ),
-            )
-            conn.commit()
+                    record = AuditRecord(
+                        id=record_id,
+                        ts=ts_str,
+                        agent_id=agent_id,
+                        tool=tool,
+                        args_sha256=args_hash,
+                        decision=decision,
+                        reason=reason,
+                        consent_nonce=consent_nonce,
+                        run_id=run_id,
+                        prev_hash=prev_hash,
+                        row_hash=row_hash,
+                    )
+
+                    cursor.execute(
+                        """
+                        INSERT INTO audit_log (
+                            id, ts, agent_id, tool, args_sha256, decision, reason,
+                            consent_nonce, run_id, prev_hash, row_hash
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record.id,
+                            record.ts,
+                            record.agent_id,
+                            record.tool,
+                            record.args_sha256,
+                            record.decision,
+                            record.reason,
+                            record.consent_nonce,
+                            record.run_id,
+                            record.prev_hash,
+                            record.row_hash,
+                        ),
+                    )
+                    cursor.execute("COMMIT")
+                except Exception:
+                    cursor.execute("ROLLBACK")
+                    raise
 
         return record
 

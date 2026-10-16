@@ -200,3 +200,25 @@ def test_unknown_agent_lookup_raises():
     registry = AgentRegistry.from_yaml_file(Path("registry/agents.yaml"))
     with pytest.raises(AgentNotFoundError):
         registry.get_agent_or_raise("non-existent-agent-id")
+
+
+def test_cryptographic_api_key_bearer_token_resolution():
+    """Verifies that SHA-256 hashed API keys authenticate agents with constant-time matching."""
+    registry = AgentRegistry.from_yaml_file(Path("registry/agents.yaml"))
+
+    # Valid secret key for weekly-digest
+    agent = registry.resolve_agent_from_bearer_token("Bearer bouncer-weekly-digest-key")
+    assert agent is not None
+    assert agent.id == "weekly-digest"
+    assert agent.tier == Tier.T0
+
+    # Valid secret key for status-reporter
+    agent2 = registry.resolve_agent_from_bearer_token("bouncer-status-reporter-key")
+    assert agent2 is not None
+    assert agent2.id == "status-reporter"
+    assert agent2.tier == Tier.T2
+
+    # Wrong secret key returns None
+    assert registry.resolve_agent_from_bearer_token("Bearer bouncer-wrong-key") is None
+    assert registry.resolve_agent_from_bearer_token("bouncer-status-reporter-key-invalid") is None
+

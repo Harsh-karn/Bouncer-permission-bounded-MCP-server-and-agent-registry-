@@ -156,3 +156,59 @@ def test_authorizer_integrates_with_audit_log(tmp_path):
 
     is_valid, _ = audit.verify_chain_integrity()
     assert is_valid is True
+
+
+def test_concurrent_audit_logging_preserves_linear_hash_chain(tmp_path):
+    """
+    Spawns multiple concurrent threads logging simultaneously.
+    Verifies that SQLite transaction locking and threading lock serialize
+    inserts such that the hash chain is strictly linear and valid.
+    """
+    import concurrent.futures
+
+    db_file = tmp_path / "concurrent_audit.db"
+    audit = AuditLog(db_path=db_file)
+
+    num_threads = 8
+    logs_per_thread = 5
+
+    def worker(worker_id):
+        for i in range(logs_per_thread):
+            audit.log(
+                agent_id=f"agent-{worker_id}",
+                tool="read_tasks",
+                decision="allow",
+                reason=f"Concurrent call {worker_id}-{i}",
+                arguments={"limit": i},
+            )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(worker, w) for w in range(num_threads)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    recs = audit.query(limit=200)
+    assert len(recs) == num_threads * logs_per_thread
+
+    is_valid, err = audit.verify_chain_integrity()
+    assert is_valid is True, f"Integrity check failed: {err}"
+
+
+def test_canonical_json_prevents_delimiter_collision(temp_audit_db):
+    """
+    Payload with pipe, quote, and delimiter symbols does not cause
+    hash collisions or chain breakage.
+    """
+    rec = temp_audit_db.log(
+        agent_id="weekly-digest",
+        tool="read_tasks",
+        decision="allow",
+        reason="Reason with | pipe | delimiters | and \"quotes\"",
+        arguments={"nested": {"key": "value|with|pipes"}},
+    )
+    assert rec.row_hash != ""
+
+    is_valid, err = temp_audit_db.verify_chain_integrity()
+    assert is_valid is True
+    assert err is None
+

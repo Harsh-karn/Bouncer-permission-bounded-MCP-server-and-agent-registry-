@@ -54,8 +54,8 @@ class BouncerMCPServer(MCPServer):
         self._register_server_tools()
 
     def get_current_agent_id(self) -> Optional[str]:
-        """Resolves active agent ID from static configuration or async context."""
-        return self.static_agent_id or current_agent_id_ctx.get()
+        """Resolves active agent ID from async context or fallback static configuration."""
+        return current_agent_id_ctx.get() or self.static_agent_id
 
     def set_active_agent(self, agent_id_or_token: str) -> None:
         """Sets the active agent ID on this server instance."""
@@ -168,3 +168,37 @@ def create_agent_server(
     )
     server.set_active_agent(agent_id_or_token)
     return server
+
+
+class BouncerAuthMiddleware:
+    """
+    ASGI middleware that extracts Authorization headers from HTTP/SSE requests,
+    resolves the agent identity from the bearer token via the registry,
+    and binds current_agent_id_ctx for the duration of the request context.
+    Prevents cross-tenant state bleed in multi-agent deployments.
+    """
+
+    def __init__(self, app: Any, registry: Optional[AgentRegistry] = None):
+        self.app = app
+        self.registry = registry or AgentRegistry.from_yaml_file()
+
+    async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            # Header keys in ASGI are lowercase bytes
+            auth_header_bytes = headers.get(b"authorization") or headers.get(b"x-agent-token") or b""
+            auth_token = auth_header_bytes.decode("utf-8", errors="ignore").strip()
+
+            agent_id = None
+            if auth_token:
+                agent = self.registry.resolve_agent_from_bearer_token(auth_token)
+                if agent:
+                    agent_id = agent.id
+
+            token = current_agent_id_ctx.set(agent_id)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                current_agent_id_ctx.reset(token)
+        else:
+            await self.app(scope, receive, send)
