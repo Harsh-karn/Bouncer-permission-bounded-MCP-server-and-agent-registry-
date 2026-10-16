@@ -17,9 +17,15 @@ DEFAULT_SECRET = os.getenv("BOUNCER_CONSENT_SECRET", "bouncer-dev-consent-signin
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
 
 
-class ConsentError(Exception):
-    """Base exception for consent verification failures."""
-    pass
+try:
+    from mcp.server.mcpserver.exceptions import ToolError
+    class ConsentError(ToolError):
+        """Base exception for consent verification failures."""
+        pass
+except ImportError:
+    class ConsentError(Exception):
+        """Base exception for consent verification failures."""
+        pass
 
 
 class NonceAlreadyUsedError(ConsentError):

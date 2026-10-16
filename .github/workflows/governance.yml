@@ -1,0 +1,50 @@
+name: Governance & Security Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Weekly Monday morning audit
+
+jobs:
+  governance-gate:
+    name: Structural Governance & Security Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Step 1 - Validate Agent Registry
+        run: |
+          python -m src.bouncer.cli validate --path registry/agents.yaml
+
+      - name: Step 2 - Model-Free Tool-Surface Invariants
+        run: |
+          pytest -v tests/test_tool_surface.py
+
+      - name: Step 3 - Unit & Architecture Tests
+        run: |
+          pytest -v tests/test_registry.py tests/test_authz.py tests/test_consent.py tests/test_carrier.py tests/test_audit.py tests/test_server.py
+
+      - name: Step 4 - Automated Credential Audit
+        run: |
+          python scripts/audit_credentials.py
+
+      - name: Step 5 - Adversarial Red-Team Prompt Injection Suite
+        run: |
+          pytest -v tests/redteam/test_injection.py
