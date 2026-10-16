@@ -119,5 +119,64 @@ def issue_consent_cmd(
     console.print("[dim]Pass this token to post_human_authored_comment(target_id, text, consent_token).[/]")
 
 
+@app.command("audit")
+def audit_cmd(
+    agent_id: Optional[str] = typer.Option(None, "--agent", "-a", help="Filter by agent ID (e.g. weekly-digest)."),
+    decision: Optional[str] = typer.Option(None, "--decision", "-d", help="Filter by decision ('allow' or 'deny')."),
+    tool: Optional[str] = typer.Option(None, "--tool", "-t", help="Filter by tool name."),
+    since: str = typer.Option("7d", "--since", "-s", help="Time window (e.g. 7d, 24h, or ISO timestamp)."),
+    limit: int = typer.Option(50, "--limit", "-n", help="Max rows to return."),
+    verify: bool = typer.Option(True, "--verify", help="Verify cryptographic hash-chain integrity."),
+    db_path: Path = typer.Option(Path("bouncer_audit.db"), "--db", help="Path to audit database."),
+):
+    """
+    Queries the append-only decision audit log to answer 'who did what and when'.
+    Also verifies cryptographic hash-chain integrity.
+    """
+    from src.bouncer.audit import AuditLog
+
+    if not db_path.exists():
+        console.print(f"[bold yellow]Audit database not found at {db_path}. No records logged yet.[/]")
+        return
+
+    audit_log = AuditLog(db_path=db_path)
+
+    # 1. Cryptographic chain verification
+    if verify:
+        is_valid, err = audit_log.verify_chain_integrity()
+        if is_valid:
+            console.print("[bold green][OK] Cryptographic hash-chain integrity: VERIFIED (0 tampering detected).[/]")
+        else:
+            console.print(f"[bold red][FAIL] Cryptographic integrity violation: {err}[/]")
+
+    # 2. Query matching records
+    records = audit_log.query(agent_id=agent_id, decision=decision, tool=tool, limit=limit)
+
+    if not records:
+        console.print("[dim]No audit records found matching criteria.[/]")
+        return
+
+    table = Table(title=f"Bouncer Decision Audit Log ({len(records)} events)", show_header=True)
+    table.add_column("Timestamp", style="dim")
+    table.add_column("Agent ID", style="cyan")
+    table.add_column("Tool", style="magenta")
+    table.add_column("Decision", style="bold")
+    table.add_column("Reason", style="white")
+    table.add_column("Row Hash", style="dim", max_width=16)
+
+    for r in records:
+        dec_style = "bold green" if r.decision == "allow" else "bold red"
+        table.add_row(
+            r.ts[:19].replace("T", " "),
+            r.agent_id,
+            r.tool,
+            f"[{dec_style}]{r.decision.upper()}[/]",
+            r.reason,
+            r.row_hash[:12] + "...",
+        )
+
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()

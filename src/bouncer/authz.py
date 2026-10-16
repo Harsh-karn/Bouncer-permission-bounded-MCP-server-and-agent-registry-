@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 from registry.schema import ALLOWED_TOOLS_BY_TIER, FORBIDDEN_TOOLS, Tier
 from src.bouncer.registry import AgentRegistry
+from src.bouncer.audit import AuditLog
 
 
 @dataclass
@@ -31,9 +32,15 @@ class Authorizer:
     Writes audit records for both allowed and denied decisions.
     """
 
-    def __init__(self, registry: AgentRegistry, audit_sink: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        audit_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
+        audit_log: Optional[AuditLog] = None,
+    ):
         self.registry = registry
         self.audit_sink = audit_sink
+        self.audit_log = audit_log
 
     def authorize(
         self,
@@ -119,7 +126,19 @@ class Authorizer:
         return result
 
     def _record_audit(self, result: AuthzResult, tool_name: str, arguments: Dict[str, Any]) -> None:
-        """Dispatches decision to the audit sink if registered."""
+        """Dispatches decision to the audit log and sink."""
+        if self.audit_log:
+            try:
+                self.audit_log.log(
+                    agent_id=result.agent_id or "unknown",
+                    tool=tool_name,
+                    decision=result.decision,
+                    reason=result.reason,
+                    arguments=arguments,
+                )
+            except Exception:
+                pass
+
         if self.audit_sink:
             try:
                 self.audit_sink({
@@ -131,6 +150,4 @@ class Authorizer:
                     "arguments": arguments,
                 })
             except Exception:
-                # Audit logging failures must not silently corrupt or crash authz, but in Section 6
-                # append-only database persistence is guaranteed.
                 pass

@@ -50,3 +50,6 @@ Thumbs.db
 *.key
 credentials.json
 token.json
+*.db
+*.sqlite
+*.sqlite3
